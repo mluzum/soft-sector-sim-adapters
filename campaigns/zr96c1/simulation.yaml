@@ -1,0 +1,35 @@
+# Simulation package manifest (soft-sector-data-curation, format 1).
+# Read by run_pipeline.py --sim-package <this directory>; see README.md.
+format_version: 1
+name: zr96c1
+title: "A=96 isobar campaign 1 (superseded by zr96c2): 200 GeV, iEBE-MUSIC 2D, energy-density-only hand-off"
+container: 2d
+
+data_root: ../merged
+
+adapter:
+  module: sim_adapters.iebe_music
+  repo: soft-sector-sim-adapters
+  options:
+    xsec_table: cross_sections_a96.csv
+
+systems:
+  - {reaction: Ru Ru, energy_gev: 200}
+  - {reaction: Zr Zr, energy_gev: 200}
+
+# One particlization per surface (linear CE delta f, clamped by the sampler).
+variants: null
+
+design:
+  file: design_lhs2000_A96.csv
+  id_column: label
+
+selection:
+  type: [flow_vn, particle_yields, particle_spectra]
+  reaction: '^(Ru\+Ru|Zr\+Zr)$'
+  energy: 200
+
+provenance:
+  simulation_code: "github.com/mluzum/iEBE-MUSIC, campaign-1 image"
+  design: "GeSe design/design_lhs2000_A96.csv (normalization 3-10)"
+  cross_sections: "TRENTo inelastic cross section per design point (GeSe scripts/cross_section)"

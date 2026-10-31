@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "soft-sector-sim-adapters"
+version = "1.0.0"
+description = "Readers that turn simulation output formats into soft-sector pipeline containers"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = ["numpy>=1.23", "h5py>=3.6"]
+
+[tool.setuptools]
+packages = ["sim_adapters"]

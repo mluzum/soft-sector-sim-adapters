@@ -1,0 +1,27 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install numpy h5py PyYAML
+      - run: python tests/test_iebe_music.py
+      - name: Campaign manifests parse and name existing files
+        run: |
+          python - <<'PY'
+          import pathlib, yaml
+          for m in sorted(pathlib.Path("campaigns").glob("*/simulation.yaml")):
+              d = yaml.safe_load(m.read_text())
+              assert d["format_version"] == 1 and d["adapter"]["module"]
+              for f in [d.get("design", {}).get("file"), d["adapter"].get("options", {}).get("xsec_table")]:
+                  assert f is None or (m.parent / f).is_file(), (m, f)
+              print(m.parent.name, "ok")
+          PY
