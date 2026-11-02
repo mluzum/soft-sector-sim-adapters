@@ -9,7 +9,9 @@ Layout of ``<data_root>``::
 
     dp<NNNN>/dp<NNNN>.h5   one group per event, ``spvn_results_<event_id>``
     dp<NNNN>/csv.tgz       drawn-event table(s): event_id, b, b_max,
-                           b_over_bmax, mult, status (ok / no_collision)
+                           b_over_bmax, mult, status (ok / no_collision;
+                           no_trento rows, where TRENTo itself did not run,
+                           were never drawn and are skipped)
 
 Each event group holds, for 13 identified species, a pT-differential table
 ``particle_<pid>_vndata_diff_y_-30_30_boostinv.dat`` (n_pT x 13: mean pT,
@@ -174,7 +176,13 @@ def check_pt_grid(sum_pt: np.ndarray, counts: np.ndarray, edges: np.ndarray) -> 
 
 
 def read_drawn_events(csv_tgz) -> dict[str, np.ndarray]:
-    """The drawn-event table of ``csv.tgz`` (event_id, b, b_max, b_over_bmax, mult, status)."""
+    """The drawn-event table of ``csv.tgz`` (event_id, b, b_max, b_over_bmax, mult, status).
+
+    A row with status ``no_trento`` (TRENTo itself did not run: no b, no
+    mult) is not a drawn event -- neither a collision nor an empty draw --
+    and is skipped, as the campaign's cross-section collector does
+    (GeSe scripts/cross_section/collect_xsec.py); ``n_not_run`` counts them.
+    Counting it as an empty event would shift the centrality anchor."""
     rows = []
     with tarfile.open(csv_tgz, "r:gz") as tf:
         for member in tf.getmembers():
@@ -186,6 +194,8 @@ def read_drawn_events(csv_tgz) -> dict[str, np.ndarray]:
             rows.extend(csv.DictReader(io.TextIOWrapper(fh, encoding="utf-8")))
     if not rows:
         raise ValueError(f"no CSV rows in {csv_tgz}")
+    n_not_run = sum(1 for r in rows if r.get("status") == "no_trento" or r.get("mult", "") == "")
+    rows = [r for r in rows if not (r.get("status") == "no_trento" or r.get("mult", "") == "")]
 
     def col(name):
         return np.asarray([float(r[name]) for r in rows], dtype=float)
@@ -197,6 +207,7 @@ def read_drawn_events(csv_tgz) -> dict[str, np.ndarray]:
         "b_over_bmax": col("b_over_bmax"),
         "mult": col("mult"),
         "status": np.asarray([r["status"] for r in rows]),
+        "n_not_run": n_not_run,
     }
 
 

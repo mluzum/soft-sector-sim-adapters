@@ -39,9 +39,10 @@ def _write(g, diff, integ):
         g[f"particle_{pid}_vndata_y_-30_30_boostinv.dat"] = integ
 
 
-def _drawn(path, ids, b_max):
+def _drawn(path, ids, b_max, not_run=()):
     text = "event_id,b,b_max,b_over_bmax,mult,status,seed_add\n"
     text += "".join(f"{i},{0.1 * i},{b_max},{0.1 * i / b_max},1.0,ok,0\n" for i in ids)
+    text += "".join(f"{i},,{b_max},,,no_trento,0\n" for i in not_run)
     data = text.encode()
     with tarfile.open(path, "w:gz") as tf:
         info = tarfile.TarInfo("events_drawn_0.csv")
@@ -49,7 +50,7 @@ def _drawn(path, ids, b_max):
         tf.addfile(info, io.BytesIO(data))
 
 
-def _campaign2(root, dp=7, events=(3, 7), drawn=(3, 5, 7, 9), b_max=12.0):
+def _campaign2(root, dp=7, events=(3, 7), drawn=(3, 5, 7, 9), b_max=12.0, not_run=(11,)):
     d = Path(root) / f"dp{dp:04d}"
     d.mkdir(parents=True)
     with h5py.File(d / f"dp{dp:04d}.h5", "w") as f:
@@ -61,7 +62,7 @@ def _campaign2(root, dp=7, events=(3, 7), drawn=(3, 5, 7, 9), b_max=12.0):
             g.attrs["deltaf_models"] = np.bytes_("CE,PTB")
             _write(g.create_group("deltaf_CE"), *_tables(100, CENTRES, 1.0))
             _write(g.create_group("deltaf_PTB"), *_tables(100, CENTRES, 2.0))
-    _drawn(d / "csv.tgz", drawn, b_max)
+    _drawn(d / "csv.tgz", drawn, b_max, not_run)
 
 
 def test_campaign2_layout_and_padding():
@@ -73,8 +74,10 @@ def test_campaign2_layout_and_padding():
         a = sim.load(7, "PTB")
         assert np.allclose(a["pt_bin_edges"], EDGES)
         assert a["Qn"].shape == (4, 13, 6, 100) and a["Qn"].dtype == np.complex128
-        # two events with a fluid, two empty draws appended after them
+        # two events with a fluid, two empty draws appended after them; the
+        # no_trento row (event 11: TRENTo did not run) is not a draw
         assert list(a["meta"]["event_ids"]) == [3, 7, 5, 9]
+        assert im.read_drawn_events(Path(tmp) / "dp0007" / "csv.tgz")["n_not_run"] == 1
         assert a["meta"]["n_empty"] == 2
         assert np.allclose(a["Qn"][:2, :, 2, :], 10.0 * 0.05 * 2.0)
         assert np.allclose(a["Qn"][:2, :, 3, :], 10.0 * -0.02j * 2.0)
