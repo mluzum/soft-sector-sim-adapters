@@ -2,8 +2,8 @@
 
 Event-by-event viscous hydrodynamics for ⁹⁶Ru+⁹⁶Ru and ⁹⁶Zr+⁹⁶Zr collisions
 at √s_NN = 200 GeV, on a 2000-point design over 20 model parameters (initial
-state, nuclear shape, transport, freeze-out), particlized with three δf
-models. The data are meant for Bayesian calibration against the STAR isobar
+state, nuclear shape, transport, freeze-out) plus a 360-point extension,
+particlized with three δf models. The data are meant for Bayesian calibration against the STAR isobar
 measurements and for nuclear-structure studies.
 
 This directory is the *simulation package*: the description of the data plus
@@ -24,8 +24,8 @@ what software needs to read them. Analysis runs through two repositories:
 |---|---|
 | `README.md` | this description |
 | `simulation.yaml` | manifest read by the pipeline: format, systems, variants, design, adapter, pinned software |
-| `design_lhs2000_A96_c2.csv` | the 2000 design points (`label` = `design_<NNNN>` ↔ data directory `dp<NNNN>`) |
-| `cross_sections_a96.csv` | per-design-point inelastic cross section and b_max (centrality anchor) |
+| `design_lhs2000_A96_c2.csv` | the design points: the 2000-point hypercube and the extension `design_2001`–`design_2360` (`label` = `design_<NNNN>` ↔ data directory `dp<NNNN>`) |
+| `cross_sections_a96.csv` | per-design-point inelastic cross section and b_max (centrality anchor), for the simulated points dp 1–1000 and 2001–2360 |
 | `setup.sh` | fetches the two repositories (`./setup.sh --venv` also builds a Python environment) |
 
 The data are in `../merged/dp<NNNN>/` (see [Data format](#data-format)).
@@ -112,6 +112,17 @@ The design is campaign 1's hypercube with only `normalization` remapped
 (3–10 → 6–13), so `design_<k>` is the same normalized point in both
 campaigns, and in the A=76 campaigns.
 
+**Extension (design_2001–2360).** 360 points added after the first analysis
+of design_0001–1000, as 180 pairs: the two points of a pair (consecutive
+labels) share the 13 medium parameters and differ only in the 7
+nuclear-shape parameters. design_2001–2240 are focused on the region the
+first analysis favours, design_2241–2360 fill the space maximin; labels are
+in priority order. Four ranges are wider than in the hypercube:
+`nucleon-width` 0.35 – 1.5 fm, `tau` 0.15 – 2.0 fm/c, `WS_radius` 4.8 –
+5.7 fm, `WS_diffusiveness` 0.40 – 0.66 fm. Events use the same event ids and
+seeds as the original points (common random numbers: an event id has the
+same draws at every design point).
+
 **Events.** For each design point, impact parameters are drawn uniformly in
 the disk b < b_max (about 2000 draws). Draws without a collision, or without
 a fluid, have no event group; they are listed with `status` in `csv.tgz`.
@@ -140,7 +151,8 @@ conversion to Q-vectors.
 ## Status and caveats
 
 - **Live campaign.** Design points are merged as jobs return, and a merged
-  file can be replaced by a larger one. The pipeline output records which
+  file can be replaced by a larger one. dp0001–1000 and dp2001–2360 are
+  simulated; design_1001–2000 are not. The pipeline output records which
   package and versions were used; rerun a design point when its files change.
 - **Peripheral events at long τ_fs.** For τ_fs ≳ 1.3 fm/c, the most
   peripheral fluids live under 0.25 fm/c. Particles are then emitted at the

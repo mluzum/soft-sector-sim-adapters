@@ -37,5 +37,5 @@ selection:
 provenance:
   simulation_code: "github.com/mluzum/iEBE-MUSIC, branch NME (= campaign2), image pin 17ae5b4"
   container_image: "iebe-music_slim_17ae5b4_f5242628.sif (md5 f52426284ebb281b813f21d931bd847a)"
-  design: "GeSe design/design_lhs2000_A96_c2.csv at 1306841 (normalization 6-13)"
-  cross_sections: "TRENTo inelastic cross section per design point (GeSe scripts/cross_section) on the campaign-1 dictionaries, valid here: same b_max, sigma_NN and nuclei"
+  design: "design_0001-2000: GeSe design/design_lhs2000_A96_c2.csv at 1306841 (normalization 6-13); design_2001-2360: extension of 2026-11-02 (180 pairs, see README)"
+  cross_sections: "dp 1-1000: TRENTo inelastic cross section per design point (GeSe scripts/cross_section) on the campaign-1 dictionaries, valid here: same b_max, sigma_NN and nuclei; dp 2001-2360: the same procedure on the extension dictionaries (GeSe 321fa6c)"
