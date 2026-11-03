@@ -164,14 +164,30 @@ example ATLAS FCal or CMS HF, and percentiles are taken relative to the
 anchor. Statistical errors come from a jackknife over 20 blocks of events.
 
 **Cost.** For O+O with 39,734 events, π±, K± and p/p̄ loaded, and all 214
-records, reading the archive takes about 6 minutes. The analysis took 20
-minutes on analysis commit 5b7014810 and 65 on b1fef19bb, because b1fef19bb
-added the pair-gap v_n{2} correlations. A faster version of those
-correlations is coming in the next analysis commit. Peak memory is about
-28 GB, and `observables.h5` is about 3 MB.
+records, a run takes about 13 minutes. About 6 of those minutes are spent
+reading the archive. Peak memory is about 28 GB, and `observables.h5` is
+about 3 MB.
 A manifest that selects fewer records is faster. Memory grows with
 the number of events, the number of species and `Norder`: storing
 harmonics up to 8 roughly doubles it.
+
+**Long runs on a shared Linux machine.** On Ubuntu and similar systems,
+`systemd-oomd` watches your login session. When memory pressure stays above
+its limit (often 50% for 20 s), it kills a whole process group. A tmux
+server or a terminal tab is such a group, so a big run started from it can
+take that terminal with it. Start big runs as their own systemd unit
+instead:
+
+```bash
+systemd-run --user --unit=oo-dp7 --working-directory=$PWD \
+    -p StandardOutput=file:$PWD/oo-dp7.log -p StandardError=file:$PWD/oo-dp7.log \
+    python3 soft-sector-sim-adapters/tools/qnvector_observables.py results_OO/dp0007.tar.gz \
+        --system "O O" --energy 5360 --out out/OO_dp0007
+systemctl --user status oo-dp7          # progress; the log is oo-dp7.log
+```
+
+If `systemd-oomd` steps in, it then stops only that run. Check
+`journalctl -u systemd-oomd` (as an administrator) to see whether it did.
 
 **Several design points or systems.** Each run is independent. Loop over
 them in whatever way suits your workflow, for example:
