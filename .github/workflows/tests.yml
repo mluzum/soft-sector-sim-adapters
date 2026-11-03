@@ -14,6 +14,7 @@ jobs:
           python-version: "3.12"
       - run: pip install numpy h5py PyYAML
       - run: python tests/test_iebe_music.py
+      - run: python tests/test_jetscape_qnvector.py
       - name: Campaign manifests parse and name existing files
         run: |
           python - <<'PY'

@@ -1,0 +1,39 @@
+# Simulation package manifest (soft-sector-data-curation, format 1).
+# Read by run_pipeline.py --sim-package <this directory>; see README.md.
+format_version: 1
+name: oo5360_tau03_pos
+title: "O+O at 5.36 TeV, tau_0 = 0.3 fm/c, nuclear-structure configurations with positive weights; minimum bias"
+container: 3d
+
+# Directory that holds the event source below (relative to this file);
+# --data-root overrides it.
+data_root: ..
+
+adapter:
+  module: sim_adapters.jetscape_qnvector
+  repo: soft-sector-sim-adapters
+  options:
+    # One design point. The archive is read as a stream (about 3 min for
+    # all events); the loose directory resultsOO_QVec_tau03_big_pos holds
+    # the same files but takes about 30 min on /data (many small files).
+    sources: {0: resultsOO_QVec_tau03_big_pos.gz.tar}
+    expected_events: 40000      # file indices 0-39999
+    missing: drop               # the 266 missing indices are failed runs
+    anchor: {f: 1.0}            # minimum bias: the sample spans sigma_inel
+
+systems:
+  - {reaction: O O, energy_gev: 5360}
+
+# One particlization per hydro event (500 oversamples summed in each file).
+variants: null
+
+selection:
+  type: [flow_vn, particle_yields]
+  reaction: '^O O '
+  energy: 5360
+
+provenance:
+  simulation_code: "JETSCAPE (hydro + SMASH afterburner), QnVector final-state writer"
+  dataset: "resultsOO_QVec_tau03_big_pos (production run)"
+  parameters: "tau_0 = 0.3 fm/c; oxygen configurations from a nuclear-structure calculation, positive-weight set"
+  oversampling: 500
