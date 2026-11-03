@@ -22,6 +22,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.lines import Line2D
+from matplotlib.mathtext import MathTextParser
 import numpy as np
 
 SIM = "#2a78d6"          # categorical slot 1
@@ -39,9 +41,20 @@ def _rng(rx, s):
     return (float(m.group(1)), float(m.group(2))) if m else None
 
 
+_MATHTEXT = MathTextParser("path")
+
+
 def _tex(s):
-    s = s.replace(r"\text{", r"\mathrm{")
-    return s if s.count("$") % 2 == 0 else s.replace("$", "")
+    """A value_type as a matplotlib title: LaTeX that mathtext cannot parse
+    (e.g. \\lvert, or unbalanced $) falls back to plain text."""
+    s = s.replace(r"\text{", r"\mathrm{").replace(r"\lvert", "|").replace(r"\rvert", "|")
+    if s.count("$") % 2 == 0:
+        try:
+            _MATHTEXT.parse(s)
+            return s
+        except ValueError:
+            pass
+    return re.sub(r"\\([{}|])", r"\1", s.replace("$", ""))
 
 
 def read_groups(path):
@@ -139,12 +152,18 @@ def draw(ax, rec, panel, exp_name):
         ax.set_xlim(left=0)
     # y range from the data, widened for simulation points that are not
     # statistically noise-dominated; a wild band is clipped, not shown whole.
-    lo, hi = np.nanmin((d - de)[okd]), np.nanmax((d + de)[okd])
-    good = ok & (se < max(hi - lo, 1e-12))
-    if good.any():
-        lo, hi = min(lo, np.min(s[good])), max(hi, np.max(s[good]))
-    pad = 0.15 * (hi - lo if hi > lo else abs(hi) or 1.0)
-    ax.set_ylim(lo - pad, hi + 2 * pad)
+    # Positive data spanning more than two decades (spectra) go on a log
+    # axis, limited to the data so a vanishing simulation tail is cut off.
+    if okd.any() and np.all(d[okd] > 0) and d[okd].max() > 100 * d[okd].min():
+        ax.set_yscale("log")
+        ax.set_ylim(d[okd].min() / 5, d[okd].max() * 5)
+    elif okd.any():
+        lo, hi = np.nanmin((d - de)[okd]), np.nanmax((d + de)[okd])
+        good = ok & (se < max(hi - lo, 1e-12))
+        if good.any():
+            lo, hi = min(lo, np.min(s[good])), max(hi, np.max(s[good]))
+        pad = 0.15 * (hi - lo if hi > lo else abs(hi) or 1.0)
+        ax.set_ylim(lo - pad, hi + 2 * pad)
     return [(sub, float(x[i]), float(s[i]), float(se[i]), float(d[i]), float(de[i]))
             for i in range(len(x))]
 
@@ -185,9 +204,10 @@ def main():
                                  rec["attrs"].get("value_type", ""), *row])
             for ax in list(axes.flat)[len(page):]:
                 ax.set_visible(False)
-            h, l = axes.flat[0].get_legend_handles_labels()
             names = sorted({j[3] for j in page})
-            fig.legend(h[:1] + [h[-1]], ["Simulation", " / ".join(names)], loc="upper right",
+            handles = [Line2D([], [], color=SIM, lw=1.6),
+                       Line2D([], [], color=INK, marker="o", ms=3.5, ls="none")]
+            fig.legend(handles, ["Simulation", " / ".join(names)], loc="upper right",
                        ncol=2, frameon=False, fontsize=9)
             fig.suptitle(f"{page[0][0]}: simulation vs data  ({k + 1}/{len(pages)})",
                          x=0.01, ha="left", fontsize=11, color=INK)

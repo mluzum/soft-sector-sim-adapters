@@ -39,7 +39,8 @@ python scripts/run_pipeline.py --sim-package <this directory> \
 are loaded.
 
 Loading the archive takes about 3–6 minutes, depending on whether the
-file is in the page cache. A full run (all 63 records) peaks at about 28 GB of memory. Reading the
+file is in the page cache. A full run of all 214 records peaks at about
+28 GB of memory; for its run time, see the guide's Cost paragraph. Reading the
 loose directory instead takes about 30 minutes, because `/data` is slow
 with many small files. To read the directory, map `sources` to it.
 

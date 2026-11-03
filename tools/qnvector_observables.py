@@ -263,6 +263,11 @@ def main(argv=None):
            "--species-grids", "--output", h5]
     if manifest:
         cmd += ["--manifest", manifest]
+    # Store the jackknife replicates, not the dense n_obs x n_obs covariance
+    # (370 MB for the full O+O set; the replicates rebuild it exactly). Older
+    # analysis checkouts lack the option; `-- --covariance full` overrides.
+    if '"--covariance"' in (analysis / "scripts" / "run_pipeline.py").read_text():
+        cmd += ["--covariance", "replicates"]
     cmd += extra
     print(f"{a.system} at {a.energy:g} GeV from {events}\n  package {pkg}\n"
           f"  log {out / 'pipeline.log'}", flush=True)
@@ -276,7 +281,9 @@ def main(argv=None):
         rc = subprocess.call([sys.executable, str(HERE / "plot_vs_data.py"), str(h5),
                               "--out", str(out), "--stem", "observables"])
         if rc != 0:
-            sys.exit(f"plot_vs_data.py failed (exit {rc})")
+            sys.exit(f"plot_vs_data.py failed (exit {rc}). {h5} is complete; redo the "
+                     f"plots with: {sys.executable} {HERE / 'plot_vs_data.py'} {h5} "
+                     f"--out {out} --stem observables")
     print(f"done: {h5}")
 
 

@@ -163,10 +163,14 @@ multiplicity or ET in that record's centrality-estimator window, for
 example ATLAS FCal or CMS HF, and percentiles are taken relative to the
 anchor. Statistical errors come from a jackknife over 20 blocks of events.
 
-**Cost.** For O+O with 39,734 events, π±, K± and p/p̄ loaded, and all 63
-records, a run takes about 7.5 minutes in total. About 6 of those minutes
-are spent reading the archive. Peak memory is about 28 GB. Memory grows
-with the number of events, the number of species and `Norder`: storing
+**Cost.** For O+O with 39,734 events, π±, K± and p/p̄ loaded, and all 214
+records, reading the archive takes about 6 minutes. The analysis took 20
+minutes on analysis commit 5b7014810 and 65 on b1fef19bb, because b1fef19bb
+added the pair-gap v_n{2} correlations. A faster version of those
+correlations is coming in the next analysis commit. Peak memory is about
+28 GB, and `observables.h5` is about 3 MB.
+A manifest that selects fewer records is faster. Memory grows with
+the number of events, the number of species and `Norder`: storing
 harmonics up to 8 roughly doubles it.
 
 **Several design points or systems.** Each run is independent. Loop over
@@ -185,7 +189,7 @@ done
 
 | file | |
 |---|---|
-| `observables.h5` | every computed value with its jackknife error and covariance, next to the experimental data |
+| `observables.h5` | every computed value with its jackknife error and replicates (for the covariance), next to the experimental data |
 | `observables.pdf` | simulation (line and band) against data (points), one panel per measurement table and centrality class |
 | `observables_table.csv` | the same numbers as a flat table: system, table, value_type, class, x, sim, sim_err, data, data_err |
 | `pipeline.log` | the full log of the analysis |
@@ -198,7 +202,7 @@ The HDF5 file has one group per system and energy, for example
 |---|---|
 | `labels` | one label per value, e.g. `vn2_single_diff_pT pT 1.00-1.20 0-5% [$v_{2}$ 2PC/figure_1a_...]` |
 | `values`, `errors` | simulation result and jackknife error |
-| `covariance` | jackknife covariance of all values in the group (they come from the same events) |
+| `jk_replicates` | the 20 delete-one-block jackknife replicates of `values`, shape (20, n). They give the covariance of all values in the group, which come from the same events (see below). |
 | `jk_bias` | jackknife bias estimate |
 | `label_record` | index *k* of the measurement each value belongs to |
 | `exp_k/values`, `exp_k/errors` | the data of measurement *k*, in the same order as its values. The attributes give `record_file`, `hepdata_file`, `value_type`, `cent_classes` and `status`. |
@@ -206,12 +210,25 @@ The HDF5 file has one group per system and energy, for example
 The file's attributes record the provenance: the command line, both
 repositories' commits, the adapter version and the run settings.
 
+The dense covariance is not stored, because it would take n² values (370 MB
+for the full O+O set) and has rank at most 19. Rebuild it exactly from the
+replicates with `analysis.jackknife.covariance_from_replicates`, or by hand
+as (B−1)/B Σ_b (r_b − r̄)(r_b − r̄)ᵀ. To store the dense matrix instead,
+add `-- --covariance full`. With an analysis checkout older than b1fef19bb,
+the wrapper writes `covariance` directly.
+
 ```python
 import h5py, numpy as np
 
 g = h5py.File("out/OO_dp0007/observables.h5")["O_O_-->_CHARGED_X_5360p0"]
 labels = g["labels"].asstr()[:]
-sim, err, cov = g["values"][:], g["errors"][:], g["covariance"][:]
+sim, err = g["values"][:], g["errors"][:]
+if "covariance" in g:
+    cov = g["covariance"][:]
+else:
+    r = g["jk_replicates"][:]                       # (n_blocks, n_values)
+    d = r - r.mean(axis=0)
+    cov = (len(r) - 1) / len(r) * d.T @ d           # = covariance_from_replicates(r)
 rec = g["label_record"][:]
 for k in np.unique(rec):
     i = np.flatnonzero(rec == k)
@@ -245,6 +262,16 @@ To plot several outputs together, run
 `campaigns/oo5360_tau03_pos/` describes the first production run: τ₀ = 0.3
 fm/c, nuclear-structure configurations with positive weights, minimum bias,
 500 oversamples. Its README covers what was checked. On that run, the
-command `$QV <archive> --system "O O" --energy 5360 --out oo5360` gives 63
-records: ATLAS v₂ and v₃ (integrated and vs pT, 2PC and template-subtracted;
-the v₄ records need more harmonics) and CMS dN_ch/dη (vs η and centrality).
+command `$QV <archive> --system "O O" --energy 5360 --out oo5360` computes
+214 records:
+
+- **flow:** ALICE, ATLAS and CMS v₂ and v₃ (two- and four-particle
+  cumulants, integrated and vs pT; the ATLAS v₄(pT) records need more
+  harmonics);
+- **multiplicity:** ATLAS and CMS dN_ch/dη, vs η and centrality;
+- **spectra:** ATLAS charged-hadron pT spectra at |η| < 0.5, 1.5 < |η| <
+  2.25 and |y_π| < 0.5. The forward y_π table is held back because its
+  HEPData normalization is inconsistent;
+- **⟨pT⟩:** ATLAS ⟨pT⟩ vs centrality.
+
+The Ne+Ne/O+O ratios are left out, because they need a Ne+Ne run as well.
