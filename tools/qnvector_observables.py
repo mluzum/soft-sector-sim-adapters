@@ -78,7 +78,7 @@ def parse_anchor(s: str):
 
 def reaction_regex(system: str) -> str:
     """Records' reactions read 'O O --> CHARGED X', 'P PB --> ...'.  No '*':
-    search_records.py reads it as a glob ('*' -> '.*')."""
+    older search_records.py rewrote it as '.*'."""
     return "^" + r"\s+".join(re.escape(t) for t in system.split()) + r"\s"
 
 

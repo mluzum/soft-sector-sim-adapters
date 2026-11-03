@@ -121,8 +121,8 @@ python3 scripts/search_records.py --type flow_vn --reaction '^O O' --energy 5360
 ```
 
 To combine searches of different types, concatenate the `records:` lists of
-their manifests into one file. In `--reaction`, `*` acts as a wildcard: it
-becomes `.*`.
+their manifests into one file. `--reaction` is a case-insensitive regex.
+Avoid `*` in it: older versions of the script rewrite `*` as `.*`.
 
 The types are the subdirectories of `soft-sector-data-curation/data/`.
 These are computed by default:
