@@ -434,17 +434,21 @@ def grids_to_container(parsed: dict, dtype=np.complex64, where: str = "source") 
     real = np.finfo(dtype).dtype            # float32 for complex64
 
     def one(p):
+        # Products are written straight into the output arrays (ufunc out= /
+        # dtype=), computed in the same precision as before: no full-size
+        # temporaries, whose allocate-and-free churn on a 40k-event set
+        # (~0.7 GB each, five per species) drives memory pressure.
         d = sp.pop(p)
         n_ev, n_r, n_p, n_h = d["cos"].shape
         qn = np.empty((n_ev, n_r, n_p, n_h + 1), dtype=dtype)
-        dn = d["dN"].astype(real)[..., None]
-        qn[..., 0] = dn[..., 0]
-        qn[..., 1:].real = dn * d.pop("cos").astype(real)
-        qn[..., 1:].imag = dn * d.pop("sin").astype(real)
+        dn = d.pop("dN")
+        qn[..., 0] = dn
+        np.multiply(d.pop("cos"), dn[..., None], out=qn.real[..., 1:], dtype=real)
+        np.multiply(d.pop("sin"), dn[..., None], out=qn.imag[..., 1:], dtype=real)
         out = {"Qn": qn, "pt_edges": pe.copy(), "cent_mult": cent_mult, "nsamples": ns,
                "positives_only": False,
-               "sum_pt": d.pop("dN").astype(np.float64) * d.pop("mean_pt"),
-               "sum_ET": d.pop("ET").astype(np.float64) * ns3}
+               "sum_pt": np.multiply(dn, d.pop("mean_pt"), dtype=np.float64),
+               "sum_ET": np.multiply(d.pop("ET"), ns3, dtype=np.float64)}
         out["eta_edges" if p == CHARGED_PID else "y_edges"] = ye.copy()
         return out
 
