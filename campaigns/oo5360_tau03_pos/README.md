@@ -40,7 +40,9 @@ are loaded.
 
 Loading the archive takes about 3–6 minutes, depending on whether the
 file is in the page cache. A full run of all 392 records takes about
-12–14 minutes and peaks at 33–35 GB of memory. Reading the
+6½ minutes and peaks at about 28 GB of memory. Without the wrapper, set
+`NUMPY_MADVISE_HUGEPAGE=0` and `OPENBLAS_NUM_THREADS=1` first; the guide
+explains why. Reading the
 loose directory instead takes about 30 minutes, because `/data` is slow
 with many small files. To read the directory, map `sources` to it.
 

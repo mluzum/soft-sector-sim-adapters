@@ -162,11 +162,14 @@ Centrality is assigned separately for each record. Events are ranked by the
 multiplicity or ET in that record's centrality-estimator window, for
 example ATLAS FCal or CMS HF, and percentiles are taken relative to the
 anchor. Statistical errors come from a jackknife over 20 blocks of events.
+Each block redoes the centrality classes, so the errors include the
+uncertainty of the class edges. With 40k events that dominates the errors on
+yields and spectra.
 
 **Cost.** For O+O with 39,734 events, π±, K± and p/p̄ loaded, and all 392
-records, a run takes 12–14 minutes. Reading the archive takes 3–6 of
+records, a run takes about 6½ minutes. Reading the archive takes 3–6 of
 those minutes, depending on whether it is already in the page cache. Peak
-memory is 33–35 GB, and `observables.h5` is about 4 MB.
+memory is about 28 GB, and `observables.h5` is about 4 MB.
 A manifest that selects fewer records is faster. Memory grows with
 the number of events, the number of species and `Norder`: storing
 harmonics up to 8 roughly doubles it.
@@ -186,8 +189,16 @@ systemd-run --user --unit=oo-dp7 --working-directory=$PWD \
 systemctl --user status oo-dp7          # progress; the log is oo-dp7.log
 ```
 
-If `systemd-oomd` steps in, it then stops only that run. Check
-`journalctl -u systemd-oomd` (as an administrator) to see whether it did.
+If `systemd-oomd` steps in, it then stops only that run, and
+`journalctl --user -u oo-dp7` says "systemd-oomd killed".
+
+High memory pressure doesn't need full memory. When numpy asks for
+transparent huge pages and the kernel has to compact memory to provide
+them, every thread stalls, even with plenty of memory available. On
+the O+O run above, that got the run killed at 26 GB of 125 GB. The wrapper
+therefore runs the analysis with `NUMPY_MADVISE_HUGEPAGE=0` and
+`OPENBLAS_NUM_THREADS=1`, unless you have set them. If you call
+`run_pipeline.py` directly, export both yourself.
 
 **Several design points or systems.** Each run is independent. Loop over
 them in whatever way suits your workflow, for example:

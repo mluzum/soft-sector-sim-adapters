@@ -60,6 +60,17 @@ ADAPTER = "sim_adapters.jetscape_qnvector"
 TYPES = ["flow_vn", "particle_yields", "particle_spectra", "mean_pT",
          "observable_ratios", "flow_harmonic_correlations"]
 
+# Environment of the analysis run; a value already set by the caller wins.
+# - NUMPY_MADVISE_HUGEPAGE=0: numpy asks for transparent huge pages on large
+#   arrays. With the kernel's default defrag=madvise, once the page cache has
+#   filled memory, every page fault then compacts memory and all threads
+#   stall. On a 40k-event O+O run that pressure got the run killed by
+#   systemd-oomd; without it the run had no memory pressure and took half
+#   the time.
+# - OPENBLAS_NUM_THREADS=1: extra OpenBLAS threads mostly spin here, and one
+#   thread is faster.
+RUN_ENV = {"NUMPY_MADVISE_HUGEPAGE": "0", "OPENBLAS_NUM_THREADS": "1"}
+
 
 def find_analysis(arg: str | None) -> Path:
     for c in (arg, os.environ.get("SOFT_SECTOR_ANALYSIS"), REPO.parent / ANALYSIS_REPO):
@@ -172,7 +183,8 @@ def run_logged(cmd, cwd, log: Path) -> int:
     with open(log, "w") as fh:
         fh.write(" ".join(map(str, cmd)) + "\n\n")
         p = subprocess.Popen([str(c) for c in cmd], cwd=cwd, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT, text=True, bufsize=1)
+                             stderr=subprocess.STDOUT, text=True, bufsize=1,
+                             env={**RUN_ENV, **os.environ})
         held = []           # a group's header, shown unless the group is skipped
         for line in p.stdout:
             fh.write(line)
