@@ -189,8 +189,22 @@ systemd-run --user --unit=oo-dp7 --working-directory=$PWD \
 systemctl --user status oo-dp7          # progress; the log is oo-dp7.log
 ```
 
-If `systemd-oomd` steps in, it then stops only that run, and
-`journalctl --user -u oo-dp7` says "systemd-oomd killed".
+This keeps the run out of your terminal's process group, but it does not
+protect the terminal. In the same pass, `systemd-oomd` can kill other
+groups of your session as well: on one O+O run it killed a tmux pane
+together with the run. `journalctl --user` then shows "systemd-oomd
+killed" for each. So keep the pressure down; the settings below do that.
+On a shared machine, also stop the run yourself before `systemd-oomd`
+acts:
+
+```bash
+P=/sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/memory.pressure
+while systemctl --user is-active -q oo-dp7; do
+    p=$(awk -F'[ =]' '/^some/ {print int($3)}' $P)      # % stalled, last 10 s
+    [ "$p" -ge 30 ] && systemctl --user stop oo-dp7 && echo "stopped: pressure $p%"
+    sleep 5
+done
+```
 
 High memory pressure doesn't need full memory. When numpy asks for
 transparent huge pages and the kernel has to compact memory to provide
