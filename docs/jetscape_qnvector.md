@@ -163,10 +163,10 @@ multiplicity or ET in that record's centrality-estimator window, for
 example ATLAS FCal or CMS HF, and percentiles are taken relative to the
 anchor. Statistical errors come from a jackknife over 20 blocks of events.
 
-**Cost.** For O+O with 39,734 events, π±, K± and p/p̄ loaded, and all 214
-records, a run takes about 13 minutes. About 6 of those minutes are spent
-reading the archive. Peak memory is about 28 GB, and `observables.h5` is
-about 3 MB.
+**Cost.** For O+O with 39,734 events, π±, K± and p/p̄ loaded, and all 392
+records, a run takes 12–14 minutes. Reading the archive takes 3–6 of
+those minutes, depending on whether it is already in the page cache. Peak
+memory is 33–35 GB, and `observables.h5` is about 4 MB.
 A manifest that selects fewer records is faster. Memory grows with
 the number of events, the number of species and `Norder`: storing
 harmonics up to 8 roughly doubles it.
@@ -279,15 +279,17 @@ To plot several outputs together, run
 fm/c, nuclear-structure configurations with positive weights, minimum bias,
 500 oversamples. Its README covers what was checked. On that run, the
 command `$QV <archive> --system "O O" --energy 5360 --out oo5360` computes
-214 records:
+392 records:
 
 - **flow:** ALICE, ATLAS and CMS v₂ and v₃ (two- and four-particle
   cumulants, integrated and vs pT; the ATLAS v₄(pT) records need more
   harmonics);
-- **multiplicity:** ATLAS and CMS dN_ch/dη, vs η and centrality;
+- **multiplicity:** ATLAS and CMS dN_ch/dη vs η and centrality, and ATLAS
+  dN_ch/dy_π vs y_π and centrality;
 - **spectra:** ATLAS charged-hadron pT spectra at |η| < 0.5, 1.5 < |η| <
   2.25 and |y_π| < 0.5. The forward y_π table is held back because its
   HEPData normalization is inconsistent;
-- **⟨pT⟩:** ATLAS ⟨pT⟩ vs centrality.
+- **⟨pT⟩:** ATLAS ⟨pT⟩ vs η and vs y_π per centrality class, and at
+  midrapidity vs centrality.
 
 The Ne+Ne/O+O ratios are left out, because they need a Ne+Ne run as well.
