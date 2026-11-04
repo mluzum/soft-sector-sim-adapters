@@ -164,7 +164,10 @@ example ATLAS FCal or CMS HF, and percentiles are taken relative to the
 anchor. Statistical errors come from a jackknife over 20 blocks of events.
 Each block redoes the centrality classes, so the errors include the
 uncertainty of the class edges. With 40k events that dominates the errors on
-yields and spectra.
+yields and spectra. This part is strongly correlated: an edge that moves
+shifts neighbouring classes together, and with them the yields, spectra and
+⟨pT⟩ that use the same estimator. The per-point errors therefore overstate
+the independent noise, so use the covariance for fits (§5).
 
 **Cost.** For O+O with 39,734 events, π±, K± and p/p̄ loaded, and all 392
 records, a run takes about 6½ minutes. Reading the archive takes 3–6 of
@@ -257,6 +260,11 @@ replicates with `analysis.jackknife.covariance_from_replicates`, or by hand
 as (B−1)/B Σ_b (r_b − r̄)(r_b − r̄)ᵀ. To store the dense matrix instead,
 add `-- --covariance full`. With an analysis checkout older than b1fef19bb,
 the wrapper writes `covariance` directly.
+
+Use the covariance for any fit or χ², because the centrality-edge part of
+the errors is correlated between classes and observables. It has rank at
+most 19, so add the experimental covariance before inverting. The χ²/N in
+`observables.pdf` uses the per-point errors only, as a quick check.
 
 ```python
 import h5py, numpy as np
