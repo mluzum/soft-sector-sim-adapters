@@ -3,9 +3,9 @@
 
     python plot_vs_data.py <pipeline output .h5> [more .h5 ...] [--out DIR] [--png]
 
-One panel per record table. The x axis is pT, eta or centrality, whichever
-the labels vary; a table spanning several centrality classes vs pT or eta
-gets one panel per class. Simulation: line + jackknife band; data: points
+One panel per record table. The x axis is pT, eta, rapidity y or
+centrality, whichever the labels vary; a table spanning several centrality
+classes vs pT, eta or y gets one panel per class. Simulation: line + jackknife band; data: points
 with total errors. Writes <out>/<stem>.pdf (all pages), optionally one
 PNG per page, and <out>/<stem>_table.csv with sim, data and pull
 (sim - data) / sqrt(err_sim^2 + err_data^2) for every point.
@@ -34,6 +34,7 @@ GRID = "#e4e3df"
 CENT_RE = re.compile(r"(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)%")
 PT_RE = re.compile(r"\bpT (\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)")
 ETA_RE = re.compile(r"\beta (-?\d+(?:\.\d+)?)-(-?\d+(?:\.\d+)?)")
+Y_RE = re.compile(r"\by (-?\d+(?:\.\d+)?)-(-?\d+(?:\.\d+)?)")
 
 
 def _rng(rx, s):
@@ -93,11 +94,14 @@ def panels_of(rec):
     labs = rec["labels"]
     pts = [_rng(PT_RE, l) for l in labs]
     etas = [_rng(ETA_RE, l) for l in labs]
+    ys = [_rng(Y_RE, l) for l in labs]
     cents = [_rng(CENT_RE, l) for l in labs]
     if all(p for p in pts) and len(set(pts)) > 1:
         axis, xlabel = pts, r"$p_T$ (GeV)"
     elif all(e for e in etas) and len(set(etas)) > 1:
         axis, xlabel = etas, r"$\eta$"
+    elif all(y for y in ys) and len(set(ys)) > 1:
+        axis, xlabel = ys, r"$y$"
     elif all(c for c in cents):
         lo = np.array([c[0] for c in cents]); hi = np.array([c[1] for c in cents])
         return [("", "centrality (%)", (lo + hi) / 2, (hi - lo) / 2, np.arange(len(labs)))]
