@@ -266,6 +266,17 @@ def test_selection_anchor_and_checks():
             assert "b_max" in str(e)
         else:
             raise AssertionError("a b_max other than the table's must be refused")
+        # the selection's coverage must be the table's fraction below b_max
+        (pkg / "frac.csv").write_text("campaign,dp,b_max,sigma_inel_fm2,frac_below_bmax\n"
+                                      "a,7,12.0,500.0,0.871\n")
+        ok = im.open_simulation(Path(tmp) / "bmax", pkg, xsec_table="frac.csv").anchor(7)
+        assert ok == {"n_ref": 90 / 0.871}
+        try:
+            im.open_simulation(Path(tmp) / "cut", pkg, xsec_table="frac.csv").anchor(7)   # coverage 1.0
+        except ValueError as e:
+            assert "--coverage 0.8710" in str(e)
+        else:
+            raise AssertionError("a coverage other than the table's frac_below_bmax must be refused")
         dead = {**SELECTED, 7: (4.0, 20.0, "failed"), 12: (4.0, 30.0, "failed"),
                 15: (4.0, 45.0, "failed")}
         _selected_campaign(Path(tmp) / "dead", selected=dead)

@@ -244,6 +244,9 @@ def read_drawn_events(csv_tgz) -> dict[str, np.ndarray]:
 
 SELECTION_FORMAT = 1
 FAILED_MODES = ("reweight", "error")
+# |selection coverage - frac_below_bmax of the cross-section table| allowed
+# (the table's statistical error is ~1e-3)
+COVERAGE_TOLERANCE = 0.005
 
 
 def selection_summary(h5_path) -> dict | None:
@@ -540,10 +543,21 @@ class Campaign:
             raise ValueError(f"{dp}: the selection accepts no events below {lo:g}% centrality, "
                              f"so the percentiles of the others are unknown")
         if self.xsec_table is not None:
-            b_max = float(self._xsec_row(design_point)["b_max"])
+            row = self._xsec_row(design_point)
+            b_max = float(row["b_max"])
             if abs(float(summary["b_max"]) - b_max) > 1e-4 * b_max:
                 raise ValueError(f"{dp}: campaign b_max {summary['b_max']} != {b_max} in "
                                  f"{self.xsec_table}")
+            # the fraction of sigma_inel below b_max sets n_ref: a selection
+            # made with another coverage (select_events.py --coverage) puts
+            # every percentile off by their ratio
+            frac = row.get("frac_below_bmax")
+            if frac not in (None, "") and abs(float(frac) - coverage) > COVERAGE_TOLERANCE:
+                raise ValueError(
+                    f"{dp}: the selection was made with coverage {coverage:g}, but b_max "
+                    f"{b_max:g} fm covers {float(frac):.4f} of sigma_inel ({self.xsec_table.name} "
+                    f"frac_below_bmax): every centrality would be off by {float(frac) / coverage:.3f}; "
+                    f"redo the selection with select_events.py --coverage {float(frac):.4f}")
         spec = {"n_ref": n_collided / coverage}
         # covered_centrality ends at min(acceptance range, 100 x coverage)
         # (chain 1028d08): only an acceptance cut inside the drawn range is a
