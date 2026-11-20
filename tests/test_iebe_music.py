@@ -306,7 +306,7 @@ STD_EDGES = np.sort(np.concatenate([np.round(np.arange(0, 3.0001, 0.05), 10), [0
 
 
 def _standard(data, dp=583, b_max=12.4, statuses=(0, 2, 0, 0), drawn=((0, 0), (1, 1), (2, 2), (3, 0), (4, 0)),
-              variants=("Grad22", "CE"), weights=None, selection=False):
+              variants=("Grad22", "CE"), weights=None, selection=None):
     """A standard-output file (iEBE-MUSIC docs/standard_output.md, 2D):
     rows = the collided events (status 0 ok, 2 no_surface); drawn = (event id,
     status) of every draw."""
@@ -320,8 +320,10 @@ def _standard(data, dp=583, b_max=12.4, statuses=(0, 2, 0, 0), drawn=((0, 0), (1
         f.attrs.update(format="iebe-music-qn", format_version=1, mode="2D", variants=",".join(variants),
                        afterburner="decay", b_max=b_max, n_drawn=len(drawn), n_collided=len(ids),
                        n_no_collision=sum(st == 1 for _, st in drawn))
-        if selection:
+        if selection:                     # {"summary": dict, "weight": [...], "centrality": [...]} per drawn row
             f.attrs["selection_format"] = 1
+            f.attrs["selection"] = json.dumps(selection["summary"])
+            f.attrs["n_collided"] = selection["summary"]["n_collided"]
         g = f.create_group("grid")
         g["pt_edges"] = STD_EDGES
         g["species_pdg"] = np.array(STD_PDG, np.int32)
@@ -337,6 +339,10 @@ def _standard(data, dp=583, b_max=12.4, statuses=(0, 2, 0, 0), drawn=((0, 0), (1
         dr = f.create_group("drawn")
         dr["event_id"] = np.array([e for e, _ in drawn], np.int64)
         dr["status"] = np.array([st for _, st in drawn], np.uint8)
+        if selection:
+            dr["weight"] = np.asarray(selection["weight"], float)
+            dr["centrality"] = np.asarray(selection["centrality"], float)
+            dr["p_acc"] = 1.0 / dr["weight"][:]
         for v in variants:
             vg = f.create_group(f"deltaf_{v}")
             vg.attrs.update(collection="all", dy_width=10.0, sums="raw over nsamples")
@@ -395,14 +401,32 @@ def test_standard_output():
             pass
         else:
             raise AssertionError("a b_max other than the table's must raise")
-        # refusals: an importance-sampled file, sums above a row's nmax
-        _standard(Path(tmp) / "sel", selection=True)
+        # an importance-sampled file: /drawn the accepted draws (ids 10-14),
+        # one failed (id 12, weight 4, in the 0-10% bin with id 10, weight 4)
+        sel = {"summary": {"coverage": 0.8, "n_collided": 300, "n_drawn": 320, "b_max": 12.4,
+                           "covered_centrality": [0.0, 80.0], "selection": {"centrality_bins": [0, 10, 50]}},
+               "weight": [4.0, 10.0, 4.0, 10.0, 25.0], "centrality": [3.0, 20.0, 6.0, 30.0, 60.0]}
+        _standard(Path(tmp) / "sel", statuses=(0, 0, 2, 0),
+                  drawn=((10, 0), (11, 0), (12, 4), (13, 2), (14, 0)), weights=[4.0, 10.0, 10.0, 25.0],
+                  selection=sel)
+        ssim = im.open_simulation(Path(tmp) / "sel", pkg, xsec_table="xsec.csv")
+        (pkg / "xsec.csv").write_text("campaign,dp,b_max,sigma_inel_fm2,frac_below_bmax\n"
+                                      "a96,583,12.4,500.0,0.8\n")
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            b = ssim.load(583, "CE")
+        assert any("failed" in str(x.message) for x in w)
+        assert list(b["event_weights"]) == [8.0, 10.0, 10.0, 25.0]   # id 12's weight to id 10
+        assert b["meta"]["n_failed"] == 1 and b["meta"]["n_empty"] == 1
+        assert abs(b["meta"]["sum_weights"] - 53.0) < 1e-12
+        assert ssim.anchor(583) == {"n_ref": 300 / 0.8}
         try:
-            im.open_simulation(Path(tmp) / "sel").load(583, "CE")
+            im.open_simulation(Path(tmp) / "sel", failed="error").load(583, "CE")
         except ValueError:
             pass
         else:
-            raise AssertionError("an importance-sampled standard file must be refused for now")
+            raise AssertionError("failed='error' must refuse a failed draw")
+        # refusal: sums above a row's nmax
         bad = _standard(Path(tmp) / "nmax") / "qn_dp0583.h5"
         with h5py.File(bad, "r+") as f:
             q = f["deltaf_CE"]["Q"][:]

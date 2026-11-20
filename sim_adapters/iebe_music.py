@@ -58,8 +58,11 @@ the container as missing, never as Q_n = 0).  no_surface rows (all sums
 0, nsamples 0) are empty events (nsamples 1).  ``rap_max`` is dy_width / 2.
 The anchor is n_ref = (collided events loaded) / frac_below_bmax (the
 cross-section table), b_max checked against the file's; draws whose hydro
-failed are not events, as above.  Importance-sampled files in this format
-are refused until the selection layout is validated.
+failed are not events, as above.  Importance-sampled files (root attrs
+selection_format 1 and the selection summary, /drawn the accepted draws
+with weight, p_acc, centrality, status): the events' weights, the failed
+draws' weight to the survivors of their selection bin, and the selection's
+anchor, as below.
 
 Importance-sampled campaigns (iEBE-MUSIC docs/importance_sampling.md)
 simulate only the draws accepted with a probability P from their
@@ -100,7 +103,7 @@ import h5py
 import numpy as np
 
 API_VERSION = 1
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 # PDG id, short name, mass (GeV).  Order defines the species axis.
 SPECIES = [
@@ -460,18 +463,24 @@ def standard_variants(h5_path) -> list[str]:
         return [v for v in str(f.attrs.get("variants", "")).split(",") if v]
 
 
-def read_standard_output(h5_path, variant: str | None = None, include_empty: bool = True) -> dict:
+def read_standard_output(h5_path, variant: str | None = None, include_empty: bool = True,
+                         failed: str = "reweight") -> dict:
     """Arrays of one standard-output design-point file (module docstring),
-    in the 2D container layout."""
+    in the 2D container layout.  An importance-sampled file (root attrs
+    selection_format 1, selection: the summary) returns ``event_weights``;
+    its /drawn lists the accepted draws, and those that failed (status
+    hydro_failed or failed) give their weight to the survivors of their
+    selection bin (``failed="reweight"``) or refuse the design point
+    (``failed="error"``), as for the toolkit files."""
+    if failed not in FAILED_MODES:
+        raise ValueError(f"failed={failed!r}: one of {FAILED_MODES}")
     h5_path = Path(h5_path)
+    summary = selection_summary(h5_path)
     with h5py.File(h5_path, "r") as f:
         if f.attrs.get("format") != STANDARD_FORMAT or int(f.attrs.get("format_version", -1)) != 1:
             raise ValueError(f"{h5_path}: not {STANDARD_FORMAT} format version 1")
         if str(f.attrs.get("mode")) != "2D":
             raise ValueError(f"{h5_path}: mode {f.attrs.get('mode')!r}; this reader takes 2D files")
-        if "selection_format" in f.attrs:
-            raise ValueError(f"{h5_path}: importance-sampled standard output is not read yet "
-                             f"(its selection layout has no validated reader)")
         names = [v for v in str(f.attrs.get("variants", "")).split(",") if v]
         if variant is None:
             if len(names) != 1:
@@ -498,7 +507,7 @@ def read_standard_output(h5_path, variant: str | None = None, include_empty: boo
         status = np.asarray(ev["status"][:], dtype=int)
         event_ids = np.asarray(ev["event_id"][:], dtype=np.int64)
         weights = np.asarray(ev["weight"][:], dtype=float)
-        if np.any(weights != 1.0):
+        if summary is None and np.any(weights != 1.0):
             raise ValueError(f"{h5_path}: weights other than 1 without a selection")
         if not set(status.tolist()) <= {STATUS["ok"], STATUS["no_surface"]}:
             raise ValueError(f"{h5_path}: /events holds statuses {sorted(set(status.tolist()))}")
@@ -507,8 +516,14 @@ def read_standard_output(h5_path, variant: str | None = None, include_empty: boo
         mtsum = np.asarray(grp["mtsum"][:], dtype=float)
         ns = np.asarray(grp["nsamples"][:], dtype=float)
         dy_width = float(grp.attrs["dy_width"])
-        drawn_status = np.asarray(f["drawn"]["status"][:], dtype=int)
-        attrs = {k: f.attrs[k] for k in ("n_drawn", "n_collided", "n_no_collision", "b_max") if k in f.attrs}
+        dr = f["drawn"]
+        drawn_status = np.asarray(dr["status"][:], dtype=int)
+        drawn = {"event_id": np.asarray(dr["event_id"][:], dtype=np.int64), "status": drawn_status}
+        if summary is not None:
+            drawn.update(weight=np.asarray(dr["weight"][:], dtype=float),
+                         centrality=np.asarray(dr["centrality"][:], dtype=float))
+        attrs = {k: f.attrs[k] for k in ("n_drawn", "n_collided", "n_no_collision", "n_accepted", "b_max")
+                 if k in f.attrs}
     empty = status == STATUS["no_surface"]
     if np.any(ns[~empty] <= 0) or np.any(ns[empty] != 0) or np.any(qn[empty] != 0):
         raise ValueError(f"{h5_path}: ok rows need nsamples > 0, no_surface rows nsamples 0 and no sums")
@@ -519,13 +534,48 @@ def read_standard_output(h5_path, variant: str | None = None, include_empty: boo
     ns = np.where(empty, 1.0, ns)
     counts = qn[:, :, 0, :].real
     check_pt_grid(ptsum[:, :, 0, :], counts, edges)
-    n_failed = int(np.sum(np.isin(drawn_status, (STATUS["hydro_failed"], STATUS["failed"]))))
-    if n_failed:
-        warnings.warn(f"{h5_path.name}: {n_failed} collided draws have no events (hydro failed or "
-                      f"lost); they are left out", stacklevel=2)
+    is_failed = np.isin(drawn_status, (STATUS["hydro_failed"], STATUS["failed"]))
+    n_failed = int(is_failed.sum())
     meta = {"source": str(h5_path), "event_ids": event_ids[keep], "n_empty": int(np.sum(empty & keep)),
             "n_failed": n_failed, "format": f"{STANDARD_FORMAT} 1", **{k: float(v) for k, v in attrs.items()}}
-    return {
+    out_weights = None
+    if summary is None:
+        if n_failed:
+            warnings.warn(f"{h5_path.name}: {n_failed} collided draws have no events (hydro failed or "
+                          f"lost); they are left out", stacklevel=2)
+    else:
+        # the accepted draws (/drawn) and the events: every row a draw that
+        # ran, with its weight; failed draws give their weight to the
+        # survivors of their selection bin
+        pos = {int(e): i for i, e in enumerate(drawn["event_id"])}
+        rows = np.asarray([pos.get(int(e), -1) for e in event_ids])
+        if np.any(rows < 0):
+            raise ValueError(f"{h5_path}: events {event_ids[rows < 0][:5].tolist()} are not accepted draws")
+        if not np.array_equal(drawn_status[rows], status):
+            raise ValueError(f"{h5_path}: /events and /drawn disagree on the events' status")
+        if not np.allclose(weights, drawn["weight"][rows], rtol=1e-6, atol=0.0):
+            raise ValueError(f"{h5_path}: /events weights differ from /drawn")
+        lost = set(np.flatnonzero(~np.isin(drawn_status, (STATUS["ok"], STATUS["no_surface"])) & ~is_failed))
+        if lost:
+            raise ValueError(f"{h5_path}: accepted draws with status "
+                             f"{sorted(set(drawn_status[sorted(lost)].tolist()))}")
+        if len(set(rows.tolist())) + n_failed != len(drawn_status):
+            raise ValueError(f"{h5_path}: accepted draws that are neither events nor failed")
+        factor = np.ones(len(drawn_status))
+        if n_failed:
+            if failed == "error":
+                raise ValueError(f"{h5_path}: {n_failed} accepted draws failed; re-run them "
+                                 f"(or load with failed='reweight')")
+            bins = (summary.get("selection") or {}).get("centrality_bins") or np.arange(0, 101, 5)
+            factor = survival_factors(drawn["centrality"], drawn["weight"], is_failed, bins)
+            share = float(drawn["weight"][is_failed].sum() / drawn["weight"].sum())
+            warnings.warn(f"{h5_path.name}: {n_failed} accepted draws failed ({100 * share:.2f}% of the "
+                          f"weight); their weight goes to the survivors of their selection bin (largest "
+                          f"factor {factor.max():.4f})", stacklevel=2)
+        weights = weights * factor[rows]
+        out_weights = weights[keep]
+        meta.update(sum_weights=float(out_weights.sum()), max_survival_factor=float(factor.max()))
+    out = {
         "Qn": qn[keep],
         "pt_bin_edges": edges,
         "masses": masses,
@@ -540,6 +590,9 @@ def read_standard_output(h5_path, variant: str | None = None, include_empty: boo
         "sum_mT": mtsum[keep],
         "meta": meta,
     }
+    if out_weights is not None:
+        out["event_weights"] = out_weights
+    return out
 
 
 class Campaign:
@@ -606,7 +659,8 @@ class Campaign:
 
     def load(self, design_point: int, variant: str | None = None) -> dict:
         if self._is_standard(design_point):
-            return read_standard_output(self._standard(design_point), variant, include_empty=self.include_empty)
+            return read_standard_output(self._standard(design_point), variant, include_empty=self.include_empty,
+                                        failed=self.failed)
         h5 = self._h5(design_point)
         if not h5.is_file():
             raise FileNotFoundError(h5)
@@ -664,7 +718,11 @@ class Campaign:
     def _standard_anchor(self, design_point: int):
         """Standard output, minimum bias: n_ref = the collided events loaded
         (ok and no_surface rows) over the fraction of sigma_inel below b_max
-        (the table's frac_below_bmax), b_max checked against the file's."""
+        (the table's frac_below_bmax), b_max checked against the file's.
+        Importance-sampled: the selection's anchor (_selection_anchor)."""
+        summary = selection_summary(self._standard(design_point))
+        if summary is not None:
+            return self._selection_anchor(design_point, summary)
         if self.xsec_table is None:
             return None
         if not self.include_empty:
