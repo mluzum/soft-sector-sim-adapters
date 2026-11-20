@@ -21,7 +21,7 @@ contract is documented in the analysis repository's
 
 | path | |
 |---|---|
-| `sim_adapters/iebe_music.py` | merged iEBE-MUSIC campaigns (TRENTo + MUSIC 2D + iSS + decays, hadronic_afterburner_toolkit Q-vectors; flat and per-δf-model layouts; importance-sampled campaigns: per-event weights, empty and failed draws, the anchor from the selection summary, option `failed: reweight | error`) |
+| `sim_adapters/iebe_music.py` | merged iEBE-MUSIC campaigns (TRENTo + MUSIC 2D + iSS + decays, hadronic_afterburner_toolkit Q-vectors; flat and per-δf-model layouts; importance-sampled campaigns: per-event weights, empty and failed draws, the anchor from the selection summary, option `failed: reweight | error`; the standard output `qn_dp<NNNN>.h5`, format `iebe-music-qn` 1 (iEBE-MUSIC docs/standard_output.md): exact per-event sums of 15 disjoint species rows including "other charged" (PDG 0), pT moments to 4, per-row highest harmonic, minimum bias; needs soft-sector-data-curation e26f12d93 or later for the `species_nmax`/`species_charge` fields) |
 | `sim_adapters/jetscape_qnvector.py` | JETSCAPE QnVector final-state text files, read directly (3D: charged hadrons on an η × pT grid, identified species on rapidity × pT grids; one event per file, in a directory or a tar archive) |
 | `campaigns/<name>/` | one simulation package per campaign: `simulation.yaml`, a README for users, design and cross-section tables |
 | `tools/deploy_package.py` | installs a campaign's package next to its data, pinning both repositories |

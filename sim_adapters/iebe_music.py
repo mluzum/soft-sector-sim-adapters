@@ -43,6 +43,24 @@ the table's b_max is the one the campaign drew with.  Draws whose hydro
 failed (status ``hydro_failed``: lost job, crash) are not events and are
 left out (``meta["n_failed"]``).
 
+Standard output (iEBE-MUSIC docs/standard_output.md, format
+"iebe-music-qn" version 1, 2D): ``dp<NNNN>/qn_dp<NNNN>.h5`` with the exact
+per-event sums of every final particle -- ``/grid`` (pt_edges, species_pdg,
+species_mass, species_charge, species_nmax), ``/events`` (the collided
+events that reached particlization: status ok or no_surface, event_id,
+weight, ...), ``/drawn`` (every drawn id and its fate) and one group
+``deltaf_<model>`` per variant (Q [E, species, 11, pT], ptsum [E, species,
+4, pT], mtsum, nsamples; attrs dy_width, collection, sums).  The species
+rows are disjoint and include "other charged" (PDG 0: Sigma+-, nuclei,
+...), so charged hadrons are the sum of the rows with non-zero charge; a
+row's harmonics above its ``species_nmax`` are not stored (returned with
+the container as missing, never as Q_n = 0).  no_surface rows (all sums
+0, nsamples 0) are empty events (nsamples 1).  ``rap_max`` is dy_width / 2.
+The anchor is n_ref = (collided events loaded) / frac_below_bmax (the
+cross-section table), b_max checked against the file's; draws whose hydro
+failed are not events, as above.  Importance-sampled files in this format
+are refused until the selection layout is validated.
+
 Importance-sampled campaigns (iEBE-MUSIC docs/importance_sampling.md)
 simulate only the draws accepted with a probability P from their
 initial-state centrality, each with the weight w = 1/P.  Their merged file
@@ -82,7 +100,7 @@ import h5py
 import numpy as np
 
 API_VERSION = 1
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 # PDG id, short name, mass (GeV).  Order defines the species axis.
 SPECIES = [
@@ -429,6 +447,101 @@ def read_design_point(h5_path, variant: str | None = None, drawn_csv=None,
     return out
 
 
+# Standard output (format "iebe-music-qn" version 1): species names by PDG id.
+STANDARD_FORMAT = "iebe-music-qn"
+STANDARD_NAMES = {211: "pi+", -211: "pi-", 321: "K+", -321: "K-", 2212: "p", -2212: "pbar",
+                  3122: "Lambda", -3122: "Lambdabar", 3312: "Xi-", -3312: "Xibar+", 3334: "Omega-",
+                  -3334: "Omegabar+", 311: "K0", -311: "K0bar", 0: "other_charged"}
+STATUS = {"ok": 0, "no_collision": 1, "no_surface": 2, "hydro_failed": 3, "failed": 4}
+
+
+def standard_variants(h5_path) -> list[str]:
+    with h5py.File(h5_path, "r") as f:
+        return [v for v in str(f.attrs.get("variants", "")).split(",") if v]
+
+
+def read_standard_output(h5_path, variant: str | None = None, include_empty: bool = True) -> dict:
+    """Arrays of one standard-output design-point file (module docstring),
+    in the 2D container layout."""
+    h5_path = Path(h5_path)
+    with h5py.File(h5_path, "r") as f:
+        if f.attrs.get("format") != STANDARD_FORMAT or int(f.attrs.get("format_version", -1)) != 1:
+            raise ValueError(f"{h5_path}: not {STANDARD_FORMAT} format version 1")
+        if str(f.attrs.get("mode")) != "2D":
+            raise ValueError(f"{h5_path}: mode {f.attrs.get('mode')!r}; this reader takes 2D files")
+        if "selection_format" in f.attrs:
+            raise ValueError(f"{h5_path}: importance-sampled standard output is not read yet "
+                             f"(its selection layout has no validated reader)")
+        names = [v for v in str(f.attrs.get("variants", "")).split(",") if v]
+        if variant is None:
+            if len(names) != 1:
+                raise ValueError(f"{h5_path}: choose a variant of {names}")
+            variant = names[0]
+        if variant not in names:
+            raise ValueError(f"{h5_path}: variant {variant!r} not in {names}")
+        grp = f[f"deltaf_{variant}" if f"deltaf_{variant}" in f else "deltaf_default"]
+        if str(grp.attrs.get("sums", "")) != "raw over nsamples":
+            raise ValueError(f"{h5_path}: sums {grp.attrs.get('sums')!r}, expected 'raw over nsamples'")
+        g = f["grid"]
+        edges = np.asarray(g["pt_edges"][:], dtype=float)
+        pdg = [int(x) for x in g["species_pdg"][:]]
+        masses = np.asarray(g["species_mass"][:], dtype=float)
+        charge = [int(x) for x in g["species_charge"][:]]
+        nmax = [int(x) for x in g["species_nmax"][:]]
+        harmonics = np.asarray(g["harmonics"][:], dtype=int)
+        if not np.array_equal(harmonics, np.arange(len(harmonics))):
+            raise ValueError(f"{h5_path}: harmonics {harmonics.tolist()}, expected 0..n")
+        unknown = [p for p in pdg if p not in STANDARD_NAMES]
+        if unknown:
+            raise ValueError(f"{h5_path}: unknown species {unknown}")
+        ev = f["events"]
+        status = np.asarray(ev["status"][:], dtype=int)
+        event_ids = np.asarray(ev["event_id"][:], dtype=np.int64)
+        weights = np.asarray(ev["weight"][:], dtype=float)
+        if np.any(weights != 1.0):
+            raise ValueError(f"{h5_path}: weights other than 1 without a selection")
+        if not set(status.tolist()) <= {STATUS["ok"], STATUS["no_surface"]}:
+            raise ValueError(f"{h5_path}: /events holds statuses {sorted(set(status.tolist()))}")
+        qn = np.asarray(grp["Q"][:], dtype=np.complex128)
+        ptsum = np.asarray(grp["ptsum"][:], dtype=float)
+        mtsum = np.asarray(grp["mtsum"][:], dtype=float)
+        ns = np.asarray(grp["nsamples"][:], dtype=float)
+        dy_width = float(grp.attrs["dy_width"])
+        drawn_status = np.asarray(f["drawn"]["status"][:], dtype=int)
+        attrs = {k: f.attrs[k] for k in ("n_drawn", "n_collided", "n_no_collision", "b_max") if k in f.attrs}
+    empty = status == STATUS["no_surface"]
+    if np.any(ns[~empty] <= 0) or np.any(ns[empty] != 0) or np.any(qn[empty] != 0):
+        raise ValueError(f"{h5_path}: ok rows need nsamples > 0, no_surface rows nsamples 0 and no sums")
+    for k, n in enumerate(nmax):                 # harmonics above a row's nmax: not stored
+        if np.any(qn[:, k, n + 1:, :] != 0):
+            raise ValueError(f"{h5_path}: species {pdg[k]} has sums above its nmax {n}")
+    keep = np.ones(len(status), bool) if include_empty else ~empty
+    ns = np.where(empty, 1.0, ns)
+    counts = qn[:, :, 0, :].real
+    check_pt_grid(ptsum[:, :, 0, :], counts, edges)
+    n_failed = int(np.sum(np.isin(drawn_status, (STATUS["hydro_failed"], STATUS["failed"]))))
+    if n_failed:
+        warnings.warn(f"{h5_path.name}: {n_failed} collided draws have no events (hydro failed or "
+                      f"lost); they are left out", stacklevel=2)
+    meta = {"source": str(h5_path), "event_ids": event_ids[keep], "n_empty": int(np.sum(empty & keep)),
+            "n_failed": n_failed, "format": f"{STANDARD_FORMAT} 1", **{k: float(v) for k, v in attrs.items()}}
+    return {
+        "Qn": qn[keep],
+        "pt_bin_edges": edges,
+        "masses": masses,
+        "species_names": [STANDARD_NAMES[p] for p in pdg],
+        "pdg_ids": pdg,
+        "species_charge": charge,
+        "species_nmax": nmax,
+        "nsamples": ns[keep],
+        "rap_max": dy_width / 2.0,
+        "sum_pt": ptsum[keep, :, 0, :],
+        "sum_pt2": ptsum[keep, :, 1, :],
+        "sum_mT": mtsum[keep],
+        "meta": meta,
+    }
+
+
 class Campaign:
     """One merged campaign directory (the adapter's simulation object)."""
 
@@ -459,24 +572,41 @@ class Campaign:
         dp = f"dp{int(design_point):04d}"
         return self.data_root / dp / f"{dp}.h5"
 
+    def _standard(self, design_point: int) -> Path:
+        dp = f"dp{int(design_point):04d}"
+        return self.data_root / dp / f"qn_{dp}.h5"
+
+    def _is_standard(self, design_point: int) -> bool:
+        std, old = self._standard(design_point).is_file(), self._h5(design_point).is_file()
+        if std and old:
+            raise ValueError(f"dp{int(design_point):04d}: both a standard-output file and a toolkit file; "
+                             f"move one away")
+        return std
+
     def design_points(self) -> list[int]:
         out = []
         for d in self.data_root.glob("dp[0-9][0-9][0-9][0-9]"):
-            if (d / f"{d.name}.h5").is_file():
+            if (d / f"{d.name}.h5").is_file() or (d / f"qn_{d.name}.h5").is_file():
                 out.append(int(d.name[2:]))
         return sorted(out)
 
     def source_files(self, design_point: int) -> list[Path]:
+        if self._is_standard(design_point):
+            return [self._standard(design_point)]
         d = self._dir(design_point)
         extra = [d / "csv.tgz", d / f"selection_dp{int(design_point):04d}.csv"]
         return [self._h5(design_point)] + [p for p in extra if p.is_file()]
 
     def variants(self, design_point: int) -> list[str]:
         """Delta f models stored for a design point ([] for campaign 1)."""
+        if self._is_standard(design_point):
+            return standard_variants(self._standard(design_point))
         with h5py.File(self._h5(design_point), "r") as f:
             return models(f[next(iter(f.keys()))])
 
     def load(self, design_point: int, variant: str | None = None) -> dict:
+        if self._is_standard(design_point):
+            return read_standard_output(self._standard(design_point), variant, include_empty=self.include_empty)
         h5 = self._h5(design_point)
         if not h5.is_file():
             raise FileNotFoundError(h5)
@@ -506,6 +636,8 @@ class Campaign:
         ``covered_cent`` when the selection accepts nothing beyond some
         centrality; a cross-section table, if given, must agree on b_max.
         """
+        if self._is_standard(design_point):
+            return self._standard_anchor(design_point)
         h5 = self._h5(design_point)
         summary = selection_summary(h5) if h5.is_file() else None
         if summary is not None:
@@ -528,6 +660,27 @@ class Campaign:
             raise ValueError(f"dp{int(design_point):04d}: campaign b_max {drawn} "
                              f"!= {b_max} in {self.xsec_table}")
         return {"b_max": b_max, "sigma_tot": sigma}
+
+    def _standard_anchor(self, design_point: int):
+        """Standard output, minimum bias: n_ref = the collided events loaded
+        (ok and no_surface rows) over the fraction of sigma_inel below b_max
+        (the table's frac_below_bmax), b_max checked against the file's."""
+        if self.xsec_table is None:
+            return None
+        if not self.include_empty:
+            raise ValueError("anchor() assumes the empty (no_surface) events are loaded (include_empty=True)")
+        dp = f"dp{int(design_point):04d}"
+        row = self._xsec_row(design_point)
+        b_max = float(row["b_max"])
+        frac = row.get("frac_below_bmax")
+        if frac in (None, ""):
+            raise ValueError(f"{self.xsec_table}: no frac_below_bmax for {dp}")
+        with h5py.File(self._standard(design_point), "r") as f:
+            file_b_max = float(f.attrs["b_max"])
+            n_rows = int(f["events"]["event_id"].shape[0])
+        if abs(file_b_max - b_max) > 1e-4 * b_max:
+            raise ValueError(f"{dp}: campaign b_max {file_b_max} != {b_max} in {self.xsec_table}")
+        return {"n_ref": n_rows / float(frac)}
 
     def _selection_anchor(self, design_point: int, summary: dict) -> dict:
         if not self.include_empty:

@@ -298,6 +298,124 @@ def test_selection_anchor_and_checks():
             raise AssertionError("event weights without a selection summary must be refused")
 
 
+STD_PDG = [211, -211, 321, -321, 2212, -2212, 3122, -3122, 3312, -3312, 3334, -3334, 311, -311, 0]
+STD_CHARGE = [1, -1, 1, -1, 1, -1, 0, 0, -1, 1, -1, 1, 0, 0, 1]
+STD_NMAX = [10, 10, 10, 10, 10, 10, 6, 6, 10, 10, 10, 10, 6, 6, 10]
+STD_EDGES = np.sort(np.concatenate([np.round(np.arange(0, 3.0001, 0.05), 10), [0.27, 3.25, 3.5, 3.75, 4.0, 4.25,
+                                                                                4.5, 4.75, 5.0, 10.0]]))
+
+
+def _standard(data, dp=583, b_max=12.4, statuses=(0, 2, 0, 0), drawn=((0, 0), (1, 1), (2, 2), (3, 0), (4, 0)),
+              variants=("Grad22", "CE"), weights=None, selection=False):
+    """A standard-output file (iEBE-MUSIC docs/standard_output.md, 2D):
+    rows = the collided events (status 0 ok, 2 no_surface); drawn = (event id,
+    status) of every draw."""
+    rng = np.random.default_rng(dp)
+    d = Path(data) / f"dp{dp:04d}"
+    d.mkdir(parents=True, exist_ok=True)
+    ids = [e for e, st in drawn if st in (0, 2)]
+    E, S, P = len(statuses), len(STD_PDG), len(STD_EDGES) - 1
+    centres = 0.5 * (STD_EDGES[:-1] + STD_EDGES[1:])
+    with h5py.File(d / f"qn_dp{dp:04d}.h5", "w") as f:
+        f.attrs.update(format="iebe-music-qn", format_version=1, mode="2D", variants=",".join(variants),
+                       afterburner="decay", b_max=b_max, n_drawn=len(drawn), n_collided=len(ids),
+                       n_no_collision=sum(st == 1 for _, st in drawn))
+        if selection:
+            f.attrs["selection_format"] = 1
+        g = f.create_group("grid")
+        g["pt_edges"] = STD_EDGES
+        g["species_pdg"] = np.array(STD_PDG, np.int32)
+        g["species_mass"] = np.array([0.138, 0.138, 0.494, 0.494, 0.938, 0.938, 1.116, 1.116, 1.315, 1.315, 1.672,
+                                      1.672, 0.494, 0.494, 1.1894])
+        g["species_charge"] = np.array(STD_CHARGE, np.int32)
+        g["species_nmax"] = np.array(STD_NMAX, np.int32)
+        g["harmonics"] = np.arange(11, dtype=np.int32)
+        ev = f.create_group("events")
+        ev["event_id"] = np.array(ids, np.int64)
+        ev["status"] = np.array(statuses, np.uint8)
+        ev["weight"] = np.ones(E) if weights is None else np.asarray(weights, float)
+        dr = f.create_group("drawn")
+        dr["event_id"] = np.array([e for e, _ in drawn], np.int64)
+        dr["status"] = np.array([st for _, st in drawn], np.uint8)
+        for v in variants:
+            vg = f.create_group(f"deltaf_{v}")
+            vg.attrs.update(collection="all", dy_width=10.0, sums="raw over nsamples")
+            counts = rng.poisson(20.0, (E, S, P)).astype(float)
+            q = np.zeros((E, S, 11, P), np.complex64)
+            q[:, :, 0, :] = counts
+            for n in range(1, 11):
+                q[:, :, n, :] = counts * (0.05 / n) * np.exp(1j * rng.uniform(0, 2 * np.pi, (E, S, 1)))
+            for k, n in enumerate(STD_NMAX):
+                q[:, k, n + 1:, :] = 0
+            ptsum = np.zeros((E, S, 4, P), np.float32)
+            for k in range(4):
+                ptsum[:, :, k, :] = counts * centres ** (k + 1)
+            ns = np.full(E, 5, np.int32)
+            empty = np.asarray(statuses) == 2
+            q[empty], ptsum[empty], ns[empty] = 0, 0, 0
+            vg["Q"], vg["ptsum"], vg["nsamples"] = q, ptsum, ns
+            vg["mtsum"] = ptsum[:, :, 0, :] * 1.1
+    return d
+
+
+def test_standard_output():
+    with tempfile.TemporaryDirectory() as tmp:
+        data = Path(tmp) / "merged"
+        _standard(data)
+        pkg = Path(tmp) / "pkg"
+        pkg.mkdir()
+        (pkg / "xsec.csv").write_text("campaign,dp,b_max,sigma_inel_fm2,frac_below_bmax\n"
+                                      "a96,583,12.4,500.0,0.8\n")
+        sim = im.open_simulation(data, pkg, xsec_table="xsec.csv")
+        assert sim.design_points() == [583] and sim.variants(583) == ["Grad22", "CE"]
+        a = sim.load(583, "CE")
+        assert a["Qn"].shape == (4, 15, 11, 70) and a["rap_max"] == 5.0
+        assert a["species_names"][-1] == "other_charged" and a["pdg_ids"][-1] == 0
+        assert a["species_charge"] == STD_CHARGE and a["species_nmax"] == STD_NMAX
+        assert list(a["nsamples"]) == [5, 1, 5, 5]                     # the empty event: nsamples 1, no sums
+        assert np.all(a["Qn"][1] == 0) and a["meta"]["n_empty"] == 1
+        c = 0.5 * (STD_EDGES[:-1] + STD_EDGES[1:])
+        assert np.allclose(a["sum_pt2"], a["Qn"][:, :, 0, :].real * c ** 2, rtol=1e-5)   # ptsum k = 2
+        assert a["sum_pt2"].shape == a["sum_mT"].shape == (4, 15, 70)
+        assert sim.anchor(583) == {"n_ref": 4 / 0.8}                   # collided events over frac_below_bmax
+        assert len(im.open_simulation(data, pkg, xsec_table="xsec.csv", include_empty=False).load(583, "CE")
+                   ["nsamples"]) == 3
+        for bad, err in ((dict(variant=None), ValueError), (dict(variant="PTB"), ValueError)):
+            try:
+                sim.load(583, bad["variant"])
+            except err:
+                pass
+            else:
+                raise AssertionError(f"{bad} must raise")
+        (pkg / "xsec.csv").write_text("campaign,dp,b_max,sigma_inel_fm2,frac_below_bmax\n"
+                                      "a96,583,13.0,500.0,0.8\n")
+        try:
+            im.open_simulation(data, pkg, xsec_table="xsec.csv").anchor(583)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("a b_max other than the table's must raise")
+        # refusals: an importance-sampled file, sums above a row's nmax
+        _standard(Path(tmp) / "sel", selection=True)
+        try:
+            im.open_simulation(Path(tmp) / "sel").load(583, "CE")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("an importance-sampled standard file must be refused for now")
+        bad = _standard(Path(tmp) / "nmax") / "qn_dp0583.h5"
+        with h5py.File(bad, "r+") as f:
+            q = f["deltaf_CE"]["Q"][:]
+            q[0, 6, 8, :] = 1.0                                       # Lambda Q8: above its nmax 6
+            f["deltaf_CE"]["Q"][...] = q
+        try:
+            im.read_standard_output(bad, "CE")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("sums above a row's nmax must be refused")
+
+
 def test_real_files_if_present():
     """pT grid of real campaign files.
 

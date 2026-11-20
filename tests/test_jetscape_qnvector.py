@@ -321,8 +321,13 @@ def test_wrapper_package_if_analysis_present():
 
 
 def test_real_file_if_present():
-    """Layout of a real file against a plain loadtxt of it."""
-    real = Path("/data/mluzum/Andreas/resultsOO_QVec_tau03_big_pos/final_output_OO_12321059_0.dat")
+    """Layout of a real file against a plain loadtxt of it.
+
+    Set JETSCAPE_QNVECTOR_TEST_FILE to a final_output_*.dat of the O+O
+    QnVector campaign (500 samples, 3 harmonics, 30 pT x 50 y); skipped
+    otherwise.
+    """
+    real = Path(os.environ.get("JETSCAPE_QNVECTOR_TEST_FILE", "/nonexistent"))
     if not real.is_file():
         print("  (real file not present; skipped)")
         return
