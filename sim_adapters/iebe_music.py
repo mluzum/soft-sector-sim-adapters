@@ -62,7 +62,12 @@ failed are not events, as above.  Importance-sampled files (root attrs
 selection_format 1 and the selection summary, /drawn the accepted draws
 with weight, p_acc, centrality, status): the events' weights, the failed
 draws' weight to the survivors of their selection bin, and the selection's
-anchor, as below.
+anchor, as below.  A variant written with the optional HBT sums
+(docs/standard_output.md section 9: /grid/hbt_* and hbt_num, hbt_pairs,
+hbt_N) returns them as ``hbt`` (the pipeline's analysis.hbt.HBTSums
+fields; soft-sector-data-curation with femtoscopy support): per event,
+like-sign pion pair sums sum_{i != j} cos(q.dx~) and N (N - 1) per row of
+species, single-particle K_T bin, lab azimuth bin and q point.
 
 Importance-sampled campaigns (iEBE-MUSIC docs/importance_sampling.md)
 simulate only the draws accepted with a probability P from their
@@ -103,7 +108,7 @@ import h5py
 import numpy as np
 
 API_VERSION = 1
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 # PDG id, short name, mass (GeV).  Order defines the species axis.
 SPECIES = [
@@ -524,9 +529,15 @@ def read_standard_output(h5_path, variant: str | None = None, include_empty: boo
                          centrality=np.asarray(dr["centrality"][:], dtype=float))
         attrs = {k: f.attrs[k] for k in ("n_drawn", "n_collided", "n_no_collision", "n_accepted", "b_max")
                  if k in f.attrs}
+        hbt = _read_hbt(g, grp, h5_path) if "hbt_num" in grp else None
     empty = status == STATUS["no_surface"]
     if np.any(ns[~empty] <= 0) or np.any(ns[empty] != 0) or np.any(qn[empty] != 0):
         raise ValueError(f"{h5_path}: ok rows need nsamples > 0, no_surface rows nsamples 0 and no sums")
+    if hbt is not None:
+        if hbt["num"].shape[0] != len(status):
+            raise ValueError(f"{h5_path}: HBT sums for {hbt['num'].shape[0]} events, /events has {len(status)}")
+        if np.any(hbt["num"][empty] != 0) or np.any(hbt["N"][empty] != 0):
+            raise ValueError(f"{h5_path}: no_surface rows with HBT sums")
     for k, n in enumerate(nmax):                 # harmonics above a row's nmax: not stored
         if np.any(qn[:, k, n + 1:, :] != 0):
             raise ValueError(f"{h5_path}: species {pdg[k]} has sums above its nmax {n}")
@@ -592,6 +603,35 @@ def read_standard_output(h5_path, variant: str | None = None, include_empty: boo
     }
     if out_weights is not None:
         out["event_weights"] = out_weights
+    if hbt is not None:
+        out["hbt"] = dict(hbt, num=hbt["num"][keep], pairs=hbt["pairs"][keep], N=hbt["N"][keep])
+    return out
+
+
+HBT_GRID = ("species", "rows", "kt_edges", "phi_edges", "q", "q_weight", "q_directions", "q_magnitudes",
+            "q_shell_edges")
+
+
+def _read_hbt(grid, grp, h5_path) -> dict:
+    """The optional HBT sums of a variant (docs/standard_output.md section
+    9): the grid entries, hbt_num [E, R, K, F, nq], hbt_pairs [E, R, K, F],
+    hbt_N [E, Sp, K, F] and the variant's hbt_y_cut."""
+    missing = [k for k in HBT_GRID if f"hbt_{k}" not in grid] + \
+        [k for k in ("hbt_pairs", "hbt_N") if k not in grp] + \
+        (["hbt_y_cut"] if "hbt_y_cut" not in grp.attrs else [])
+    if missing:
+        raise ValueError(f"{h5_path}: HBT sums without {missing}")
+    out = {k: np.asarray(grid[f"hbt_{k}"][:]) for k in HBT_GRID}
+    out["species"] = [int(x) for x in out["species"]]
+    out["num"] = np.asarray(grp["hbt_num"][:])
+    out["pairs"] = np.asarray(grp["hbt_pairs"][:], dtype=float)
+    out["N"] = np.asarray(grp["hbt_N"][:], dtype=float)
+    out["y_cut"] = float(grp.attrs["hbt_y_cut"])
+    E, R, K, F, nq = out["num"].shape
+    if (out["pairs"].shape != (E, R, K, F) or out["N"].shape != (E, len(out["species"]), K, F)
+            or out["rows"].shape != (R, len(out["species"])) or out["q"].shape != (nq, 3)
+            or len(out["kt_edges"]) != K + 1 or len(out["phi_edges"]) != F + 1):
+        raise ValueError(f"{h5_path}: HBT sums with inconsistent shapes")
     return out
 
 

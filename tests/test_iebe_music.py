@@ -306,10 +306,12 @@ STD_EDGES = np.sort(np.concatenate([np.round(np.arange(0, 3.0001, 0.05), 10), [0
 
 
 def _standard(data, dp=583, b_max=12.4, statuses=(0, 2, 0, 0), drawn=((0, 0), (1, 1), (2, 2), (3, 0), (4, 0)),
-              variants=("Grad22", "CE"), weights=None, selection=None):
+              variants=("Grad22", "CE"), weights=None, selection=None, hbt_variants=()):
     """A standard-output file (iEBE-MUSIC docs/standard_output.md, 2D):
     rows = the collided events (status 0 ok, 2 no_surface); drawn = (event id,
-    status) of every draw."""
+    status) of every draw; the variants in hbt_variants carry HBT sums
+    (section 9: one row of pi+ and pi-, 3 K_T bins, 4 azimuth bins, 2
+    directions x 3 magnitudes)."""
     rng = np.random.default_rng(dp)
     d = Path(data) / f"dp{dp:04d}"
     d.mkdir(parents=True, exist_ok=True)
@@ -332,6 +334,17 @@ def _standard(data, dp=583, b_max=12.4, statuses=(0, 2, 0, 0), drawn=((0, 0), (1
         g["species_charge"] = np.array(STD_CHARGE, np.int32)
         g["species_nmax"] = np.array(STD_NMAX, np.int32)
         g["harmonics"] = np.arange(11, dtype=np.int32)
+        if hbt_variants:
+            dirs = np.array([[1.0, 0, 0], [0, 1.0, 0]])
+            mags = np.array([0.01, 0.03, 0.05])
+            g["hbt_species"] = np.array([211, -211], np.int32)
+            g["hbt_rows"] = np.array([[1, 1]], np.int8)
+            g["hbt_kt_edges"] = np.array([0.15, 0.25, 0.35, 0.45])
+            g["hbt_phi_edges"] = np.linspace(-np.pi, np.pi, 5)
+            g["hbt_q"] = (mags[None, :, None] * dirs[:, None, :]).reshape(-1, 3)
+            g["hbt_q_directions"], g["hbt_q_magnitudes"] = dirs, mags
+            g["hbt_q_shell_edges"] = np.array([0.0, 0.02, 0.04, 0.06])
+            g["hbt_q_weight"] = np.repeat([0.5, 0.5], 3) * np.tile(np.diff(g["hbt_q_shell_edges"][:] ** 3), 2)
         ev = f.create_group("events")
         ev["event_id"] = np.array(ids, np.int64)
         ev["status"] = np.array(statuses, np.uint8)
@@ -361,7 +374,33 @@ def _standard(data, dp=583, b_max=12.4, statuses=(0, 2, 0, 0), drawn=((0, 0), (1
             q[empty], ptsum[empty], ns[empty] = 0, 0, 0
             vg["Q"], vg["ptsum"], vg["nsamples"] = q, ptsum, ns
             vg["mtsum"] = ptsum[:, :, 0, :] * 1.1
+            if v in hbt_variants:
+                n = rng.poisson(30.0, (E, 2, 3, 4)).astype(np.float32)
+                n[empty] = 0
+                pairs = (n * (n - 1)).sum(axis=1, keepdims=True).astype(float)
+                vg["hbt_N"], vg["hbt_pairs"] = n, pairs
+                vg["hbt_num"] = (pairs[..., None] * np.exp(-np.arange(6) / 3.0)).astype(np.float32)
+                vg.attrs["hbt_y_cut"] = 4.0
     return d
+
+
+def test_standard_output_hbt():
+    with tempfile.TemporaryDirectory() as tmp:
+        data = Path(tmp) / "merged"
+        _standard(data, hbt_variants=("CE",))
+        pkg = Path(tmp) / "pkg"
+        pkg.mkdir()
+        (pkg / "xsec.csv").write_text("campaign,dp,b_max,sigma_inel_fm2,frac_below_bmax\n"
+                                      "a96,583,12.4,500.0,0.8\n")
+        sim = im.open_simulation(data, pkg, xsec_table="xsec.csv")
+        a = sim.load(583, "CE")
+        h = a["hbt"]
+        assert h["num"].shape == (4, 1, 3, 4, 6) and h["pairs"].shape == (4, 1, 3, 4) and h["N"].shape == (4, 2, 3, 4)
+        assert h["species"] == [211, -211] and h["y_cut"] == 4.0 and h["q"].shape == (6, 3)
+        assert np.all(h["num"][1] == 0) and np.allclose(h["pairs"][:, 0], (h["N"] * (h["N"] - 1)).sum(axis=1))
+        assert "hbt" not in sim.load(583, "Grad22")                    # a variant without HBT sums
+        b = im.open_simulation(data, pkg, xsec_table="xsec.csv", include_empty=False).load(583, "CE")
+        assert b["hbt"]["num"].shape[0] == 3 and np.array_equal(b["hbt"]["num"], h["num"][[0, 2, 3]])
 
 
 def test_standard_output():
