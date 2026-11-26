@@ -92,6 +92,17 @@ gives the campaign's exact total, n_ref = n_collided / coverage (the
 collided draws of its first phase over the fraction of the inelastic cross
 section that b_max covers), plus ``covered_cent`` when the selection
 accepts no events beyond some centrality inside that fraction.
+
+A staged design point (a campaign run in stages from a list in rank order,
+rank = u / P with u the selection's own uniform: uniform for every
+accepted draw, so the order is independent of the events) holds the first
+N of the n_accepted draws: root attrs ``selection_first`` = N and
+``selection_fraction`` = N / n_accepted, its /drawn exactly those N draws.
+The prefix is a random subsample of the accepted draws; the weights stay
+1/P, and the anchor becomes n_ref = n_collided x selection_fraction /
+coverage.  A file without the attributes holds the whole list.  Design
+points at different stages share their first min(N1, N2) events; match
+them by event_id, never by row.
 """
 
 from __future__ import annotations
@@ -108,7 +119,7 @@ import h5py
 import numpy as np
 
 API_VERSION = 1
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 # PDG id, short name, mass (GeV).  Order defines the species axis.
 SPECIES = [
@@ -286,11 +297,39 @@ def selection_summary(h5_path) -> dict | None:
             raise ValueError(f"{h5_path}: selection_format {fmt}, this adapter reads "
                              f"{SELECTION_FORMAT}")
         summary = json.loads(f.attrs["selection"])
-        for key in ("n_drawn", "n_collided", "b_max"):
+        for key in ("n_drawn", "n_collided", "n_accepted", "b_max", "selection_first", "selection_fraction"):
             if key in f.attrs:
                 summary.setdefault(key, f.attrs[key].item() if hasattr(f.attrs[key], "item")
                                    else f.attrs[key])
     return summary
+
+
+def staged_fraction(summary: dict | None, where="") -> float:
+    """The share of the accepted draws a staged design point holds
+    (``selection_fraction`` = selection_first / n_accepted), 1 for the whole
+    list.  A prefix (< 1) must come from a list in rank order (the
+    summary's ``order``), which is independent of the events: only then is
+    it a random subsample of the accepted draws."""
+    if summary is None:
+        return 1.0
+    first, frac = summary.get("selection_first"), summary.get("selection_fraction")
+    if first is None and frac is None:
+        return 1.0
+    if first is None or frac is None:
+        raise ValueError(f"{where}: selection_first and selection_fraction come together")
+    n_acc = summary.get("n_accepted")
+    first, frac = int(first), float(frac)
+    if n_acc is None or not 0 < first <= int(n_acc):
+        raise ValueError(f"{where}: selection_first {first} of n_accepted {n_acc}")
+    if abs(frac - first / float(n_acc)) > 1e-9:
+        raise ValueError(f"{where}: selection_fraction {frac} != selection_first / n_accepted "
+                         f"= {first} / {n_acc}")
+    if first < int(n_acc):
+        order = summary.get("order", (summary.get("selection") or {}).get("order"))
+        if order != "rank":
+            raise ValueError(f"{where}: the first {first} of {n_acc} accepted draws of a list in order "
+                             f"{order!r}, not 'rank': only a prefix in rank order is a random subsample")
+    return frac
 
 
 def read_selection(h5_path) -> dict[str, np.ndarray]:
@@ -572,6 +611,13 @@ def read_standard_output(h5_path, variant: str | None = None, include_empty: boo
                              f"{sorted(set(drawn_status[sorted(lost)].tolist()))}")
         if len(set(rows.tolist())) + n_failed != len(drawn_status):
             raise ValueError(f"{h5_path}: accepted draws that are neither events nor failed")
+        staged = staged_fraction(summary, str(h5_path))
+        if "selection_first" in summary:
+            if len(drawn_status) != int(summary["selection_first"]):
+                raise ValueError(f"{h5_path}: /drawn holds {len(drawn_status)} accepted draws, "
+                                 f"selection_first {summary['selection_first']}")
+            meta.update(selection_first=int(summary["selection_first"]))
+        meta.update(selection_fraction=staged)
         factor = np.ones(len(drawn_status))
         if n_failed:
             if failed == "error":
@@ -809,7 +855,10 @@ class Campaign:
                     f"{b_max:g} fm covers {float(frac):.4f} of sigma_inel ({self.xsec_table.name} "
                     f"frac_below_bmax): every centrality would be off by {float(frac) / coverage:.3f}; "
                     f"redo the selection with select_events.py --coverage {float(frac):.4f}")
-        spec = {"n_ref": n_collided / coverage}
+        # a staged design point holds the first selection_fraction of the
+        # accepted draws, a random subsample: the expected sum of its
+        # weights is that share of the full list's
+        spec = {"n_ref": n_collided * staged_fraction(summary, dp) / coverage}
         # covered_centrality ends at min(acceptance range, 100 x coverage)
         # (chain 1028d08): only an acceptance cut inside the drawn range is a
         # cut of the selection; the end of the b_max coverage is the anchor's

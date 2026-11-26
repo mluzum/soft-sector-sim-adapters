@@ -479,6 +479,59 @@ def test_standard_output():
             raise AssertionError("sums above a row's nmax must be refused")
 
 
+def test_staged_selection():
+    """A design point merged from the first N of a rank-ordered list of
+    n_accepted draws (root attrs selection_first, selection_fraction): the
+    anchor scales by N / n_accepted; inconsistent files are refused."""
+    def staged(root, first=None, frac=None, order="rank", n_accepted=10, drawn=None):
+        summary = {"coverage": 0.8, "n_collided": 300, "n_drawn": 320, "b_max": 12.4, "n_accepted": n_accepted,
+                   "covered_centrality": [0.0, 80.0], "selection": {"centrality_bins": [0, 10, 50]}}
+        if order is not None:
+            summary["order"] = order
+        sel = {"summary": summary, "weight": [4.0, 10.0, 4.0, 10.0, 25.0], "centrality": [3.0, 20.0, 6.0, 30.0, 60.0]}
+        d = _standard(root, statuses=(0, 0, 0, 2, 0), drawn=drawn or ((10, 0), (11, 0), (12, 0), (13, 2), (14, 0)),
+                      weights=[4.0, 10.0, 4.0, 10.0, 25.0], selection=sel)
+        with h5py.File(d / "qn_dp0583.h5", "r+") as f:
+            if first is not None:
+                f.attrs["selection_first"] = np.int64(first)
+            if frac is not None:
+                f.attrs["selection_fraction"] = float(frac)
+        return im.open_simulation(root)
+
+    def refused(sim, what):
+        try:
+            sim.load(583, "CE")
+            sim.anchor(583)
+        except ValueError:
+            return
+        raise AssertionError(f"{what} must be refused")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        # the whole list: no attributes, the anchor of the full selection
+        sim = staged(tmp / "whole")
+        a = sim.load(583, "CE")
+        assert a["meta"]["selection_fraction"] == 1.0 and "selection_first" not in a["meta"]
+        assert sim.anchor(583) == {"n_ref": 300 / 0.8}
+        # the first 5 of 10: half the anchor, the same events and weights
+        sim = staged(tmp / "half", first=5, frac=0.5)
+        b = sim.load(583, "CE")
+        assert b["meta"]["selection_first"] == 5 and b["meta"]["selection_fraction"] == 0.5
+        assert list(b["event_weights"]) == list(a["event_weights"])
+        assert np.array_equal(b["Qn"], a["Qn"])
+        assert sim.anchor(583) == {"n_ref": 300 * 0.5 / 0.8}
+        # merged with --first n_accepted: the whole list
+        sim = staged(tmp / "all", first=5, frac=1.0, n_accepted=5)
+        assert sim.anchor(583) == {"n_ref": 300 / 0.8}
+        assert sim.load(583, "CE")["meta"]["selection_fraction"] == 1.0
+        # refusals
+        refused(staged(tmp / "r1", first=5, frac=0.4), "a fraction other than first / n_accepted")
+        refused(staged(tmp / "r2", first=5, frac=0.5, order=None), "a prefix of a list not in rank order")
+        refused(staged(tmp / "r3", first=5), "selection_first without selection_fraction")
+        refused(staged(tmp / "r4", first=6, frac=0.6), "/drawn not holding selection_first draws")
+        refused(staged(tmp / "r5", first=12, frac=1.2), "selection_first beyond n_accepted")
+
+
 def test_real_files_if_present():
     """pT grid of real campaign files.
 
